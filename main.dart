@@ -35,14 +35,39 @@ const carColors = <String, Color>{
 
 // ---------- Dados e armazenamento local ----------
 class Car {
-  Car({required this.id, required this.name, required this.code, required this.color, required this.brand, required this.status, this.photo = ''});
+  Car({
+    required this.id,
+    required this.name,
+    required this.code,
+    required this.color,
+    required this.brand,
+    required this.status,
+    this.photo = '',
+  });
+
   final String id, name, code, color, brand;
   String status;
-  String photo; // nome do arquivo da foto (vazio = sem foto)
+  String photo;
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'code': code, 'color': color, 'brand': brand, 'status': status, 'photo': photo};
-  factory Car.fromJson(Map<String, dynamic> j) =>
-      Car(id: j['id'], name: j['name'], code: j['code'], color: j['color'], brand: j['brand'], status: j['status'], photo: j['photo'] ?? '');
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'code': code,
+        'color': color,
+        'brand': brand,
+        'status': status,
+        'photo': photo,
+      };
+
+  factory Car.fromJson(Map<String, dynamic> j) => Car(
+        id: j['id'],
+        name: j['name'],
+        code: j['code'],
+        color: j['color'],
+        brand: j['brand'],
+        status: j['status'],
+        photo: j['photo'] ?? '',
+      );
 }
 
 class Garage extends ChangeNotifier {
@@ -53,9 +78,21 @@ class Garage extends ChangeNotifier {
   Future<void> load() async {
     _prefs = await SharedPreferences.getInstance();
     docsPath = (await getApplicationDocumentsDirectory()).path;
-    final raw = _prefs!.getString('cars');
-    if (raw != null) {
-      cars.addAll((jsonDecode(raw) as List).map((e) => Car.fromJson(e as Map<String, dynamic>)));
+
+    try {
+      final raw = _prefs!.getString('cars');
+      if (raw == null) return;
+
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        for (final item in decoded) {
+          if (item is Map<String, dynamic>) {
+            cars.add(Car.fromJson(item));
+          }
+        }
+      }
+    } catch (_) {
+      cars.clear();
     }
   }
 
@@ -106,8 +143,10 @@ final garage = Garage();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await garage.load();
-  MobileAds.instance.updateRequestConfiguration(RequestConfiguration(maxAdContentRating: MaxAdContentRating.g));
-  MobileAds.instance.initialize();
+  MobileAds.instance.updateRequestConfiguration(
+    RequestConfiguration(maxAdContentRating: MaxAdContentRating.g),
+  );
+  await MobileAds.instance.initialize();
   runApp(const GarageApp());
 }
 
@@ -124,7 +163,10 @@ class GarageApp extends StatelessWidget {
         brightness: Brightness.dark,
         scaffoldBackgroundColor: bg,
         colorScheme: const ColorScheme.dark(primary: red, secondary: blue, surface: surface),
-        navigationBarTheme: const NavigationBarThemeData(backgroundColor: Color(0xFF0F0F14), indicatorColor: red),
+        navigationBarTheme: const NavigationBarThemeData(
+          backgroundColor: Color(0xFF0F0F14),
+          indicatorColor: red,
+        ),
       ),
       home: const Shell(),
     );
@@ -151,7 +193,10 @@ InputDecoration field(String hint, [IconData? icon]) => InputDecoration(
       prefixIcon: icon == null ? null : Icon(icon),
       filled: true,
       fillColor: surface,
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(26), borderSide: const BorderSide(color: border, width: 2)),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(26),
+        borderSide: const BorderSide(color: border, width: 2),
+      ),
     );
 
 Widget label(String t) => Padding(
@@ -199,7 +244,13 @@ class CarPainter extends CustomPainter {
     for (final x in [26.0, 72.0]) {
       canvas.drawCircle(Offset(x, 34), 8, Paint()..color = bg);
       canvas.drawCircle(
-          Offset(x, 34), 8, Paint()..color = const Color(0xFF9A9AAA)..style = PaintingStyle.stroke..strokeWidth = 2);
+        Offset(x, 34),
+        8,
+        Paint()
+          ..color = const Color(0xFF9A9AAA)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
+      );
     }
   }
 
@@ -219,7 +270,13 @@ class CarImage extends StatelessWidget {
     final fallback = Center(child: CustomPaint(size: silhouette, painter: CarPainter(c)));
     final f = garage.photoOf(car);
     if (f == null) return fallback;
-    return Image.file(f, fit: BoxFit.cover, width: double.infinity, height: double.infinity, errorBuilder: (_, __, ___) => fallback);
+    return Image.file(
+      f,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      errorBuilder: (_, __, ___) => fallback,
+    );
   }
 }
 
@@ -266,7 +323,7 @@ class _AdSlotState extends State<AdSlot> {
   @override
   Widget build(BuildContext context) {
     final a = ad;
-    if (!loaded || a == null) return const SizedBox(height: 66); // reserva o espaço do banner
+    if (!loaded || a == null) return const SizedBox(height: 66);
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8),
       width: a.size.width.toDouble(),
@@ -286,14 +343,21 @@ class CarRow extends StatelessWidget {
     final c = carColors[car.color] ?? muted;
     return Container(
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: surface, border: Border.all(color: border, width: 2), borderRadius: BorderRadius.circular(22)),
+      decoration: BoxDecoration(
+        color: surface,
+        border: Border.all(color: border, width: 2),
+        borderRadius: BorderRadius.circular(22),
+      ),
       child: Row(children: [
         Container(
           width: 84,
           height: 64,
           alignment: Alignment.center,
           clipBehavior: Clip.antiAlias,
-          decoration: BoxDecoration(color: Color.lerp(surface, c, .18), borderRadius: BorderRadius.circular(14)),
+          decoration: BoxDecoration(
+            color: Color.lerp(surface, c, .18),
+            borderRadius: BorderRadius.circular(14),
+          ),
           child: CarImage(car: car, silhouette: const Size(64, 32)),
         ),
         const SizedBox(width: 14),
@@ -330,8 +394,10 @@ class _ShellState extends State<Shell> {
             padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
             child: Row(children: [
               Expanded(
-                child: Text(tab == 0 ? 'Sua coleção' : 'Lista de desejos',
-                    style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800)),
+                child: Text(
+                  tab == 0 ? 'Sua coleção' : 'Lista de desejos',
+                  style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800),
+                ),
               ),
               IconButton.filled(
                 tooltip: 'Já tenho esse?',
@@ -345,7 +411,10 @@ class _ShellState extends State<Shell> {
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
             child: SegmentedButton<String>(
               showSelectedIcon: false,
-              style: SegmentedButton.styleFrom(selectedBackgroundColor: red, selectedForegroundColor: Colors.white),
+              style: SegmentedButton.styleFrom(
+                selectedBackgroundColor: red,
+                selectedForegroundColor: Colors.white,
+              ),
               segments: [for (final b in brands) ButtonSegment(value: b, label: Text(b))],
               selected: {brand},
               onSelectionChanged: (s) => setState(() => brand = s.first),
@@ -387,7 +456,7 @@ class CollectionView extends StatefulWidget {
 
 class _CollectionViewState extends State<CollectionView> {
   String query = '';
-  String? filter; // null = Todos
+  String? filter;
 
   @override
   Widget build(BuildContext context) {
@@ -402,6 +471,7 @@ class _CollectionViewState extends State<CollectionView> {
                 (filter == null || c.status == filter) &&
                 (q.isEmpty || '${c.name} ${c.color} ${c.code}'.toLowerCase().contains(q)))
             .toList();
+
         return Column(children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
@@ -427,12 +497,20 @@ class _CollectionViewState extends State<CollectionView> {
           Expanded(
             child: list.isEmpty
                 ? const Center(
-                    child: Text('Nenhum carrinho ainda.\nToque em Novo para cadastrar.',
-                        textAlign: TextAlign.center, style: TextStyle(color: muted)))
+                    child: Text(
+                      'Nenhum carrinho ainda.\nToque em Novo para cadastrar.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: muted),
+                    ),
+                  )
                 : GridView.builder(
                     padding: const EdgeInsets.fromLTRB(20, 14, 20, 90),
                     gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2, mainAxisSpacing: 14, crossAxisSpacing: 14, childAspectRatio: 0.9),
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 14,
+                      crossAxisSpacing: 14,
+                      childAspectRatio: 0.9,
+                    ),
                     itemCount: list.length,
                     itemBuilder: (_, i) => CarCard(car: list[i]),
                   ),
@@ -455,7 +533,11 @@ class CarCard extends StatelessWidget {
       onLongPress: () => confirmDelete(context, car),
       child: Container(
         clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(color: surface, border: Border.all(color: border, width: 2), borderRadius: BorderRadius.circular(22)),
+        decoration: BoxDecoration(
+          color: surface,
+          border: Border.all(color: border, width: 2),
+          borderRadius: BorderRadius.circular(22),
+        ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Expanded(
             child: Container(
@@ -469,8 +551,14 @@ class CarCard extends StatelessWidget {
                     left: 10,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                      decoration: BoxDecoration(color: car.status == 'Repetido' ? blue : red, borderRadius: BorderRadius.circular(12)),
-                      child: Text(car.status, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Colors.white)),
+                      decoration: BoxDecoration(
+                        color: car.status == 'Repetido' ? blue : red,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        car.status,
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Colors.white),
+                      ),
                     ),
                   ),
               ]),
@@ -479,7 +567,12 @@ class CarCard extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.all(12),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(car.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+              Text(
+                car.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+              ),
               Text(car.color, style: const TextStyle(color: muted, fontSize: 13)),
             ]),
           ),
@@ -510,12 +603,24 @@ const affiliateSearch = 'https://www.amazon.com.br/s?k={q}&tag=SEU_CODIGO';
 
 Future<void> openStore(BuildContext context, Car c) async {
   final url = affiliateSearch.replaceAll('{q}', Uri.encodeQueryComponent('${c.brand} ${c.name}'));
-  var ok = false;
+  final uri = Uri.parse(url);
+
   try {
-    ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    if (await canLaunchUrl(uri)) {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Não foi possível abrir a loja')),
+        );
+      }
+      return;
+    }
   } catch (_) {}
-  if (!ok && context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Não foi possível abrir a loja')));
+
+  if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Não foi possível abrir a loja')),
+    );
   }
 }
 
@@ -532,14 +637,21 @@ class WishlistView extends StatelessWidget {
         final list = garage.cars.where((c) => c.brand == brand && c.status == 'Quero').toList();
         if (list.isEmpty) {
           return const Center(
-            child: Text('Sua lista está vazia.\nCadastre um carrinho com o marcador Quero.',
-                textAlign: TextAlign.center, style: TextStyle(color: muted)),
+            child: Text(
+              'Sua lista está vazia.\nCadastre um carrinho com o marcador Quero.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: muted),
+            ),
           );
         }
+
         return Column(children: [
           const Padding(
             padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
-            child: Text('Links de lojas parceiras podem gerar comissão para o app.', style: TextStyle(color: muted, fontSize: 12)),
+            child: Text(
+              'Links de lojas parceiras podem gerar comissão para o app.',
+              style: TextStyle(color: muted, fontSize: 12),
+            ),
           ),
           Expanded(
             child: ListView.separated(
@@ -555,7 +667,10 @@ class WishlistView extends StatelessWidget {
                     onPressed: () => garage.setStatus(list[i], 'Tenho'),
                   ),
                   OutlinedButton(
-                    style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF3F66C2), width: 2), minimumSize: const Size(0, 44)),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Color(0xFF3F66C2), width: 2),
+                      minimumSize: const Size(0, 44),
+                    ),
                     onPressed: () => openStore(context, list[i]),
                     child: const Text('Comprar'),
                   ),
@@ -599,27 +714,44 @@ class _AddCarPageState extends State<AddCarPage> {
       if (f != null && mounted) setState(() => picked = f);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Não foi possível abrir a câmera ou a galeria')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Não foi possível abrir a câmera ou a galeria')),
+        );
       }
     }
   }
 
   Future<void> save() async {
-    if (name.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Dê um nome ao carrinho')));
+    final codeText = code.text.trim();
+    final nameText = name.text.trim();
+
+    if (nameText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Dê um nome ao carrinho')),
+      );
       return;
     }
+
+    final existing = garage.byCode(codeText);
+    if (codeText.isNotEmpty && existing != null && existing.status != 'Quero') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Este código já existe na sua coleção')),
+      );
+      return;
+    }
+
     final p = picked;
     final photo = p == null ? '' : await garage.savePhoto(p);
     garage.add(Car(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
-      name: name.text.trim(),
-      code: code.text.trim(),
+      name: nameText,
+      code: codeText,
       color: color,
       brand: brand,
       status: status,
       photo: photo,
     ));
+
     if (mounted) Navigator.pop(context);
   }
 
@@ -632,7 +764,11 @@ class _AddCarPageState extends State<AddCarPage> {
         Container(
           height: 200,
           clipBehavior: Clip.antiAlias,
-          decoration: BoxDecoration(color: surface, border: Border.all(color: border, width: 2), borderRadius: BorderRadius.circular(24)),
+          decoration: BoxDecoration(
+            color: surface,
+            border: Border.all(color: border, width: 2),
+            borderRadius: BorderRadius.circular(24),
+          ),
           child: picked == null
               ? const Center(child: Icon(Icons.photo_camera_outlined, size: 48, color: muted))
               : Image.file(File(picked!.path), fit: BoxFit.cover, width: double.infinity),
@@ -641,7 +777,11 @@ class _AddCarPageState extends State<AddCarPage> {
         Row(children: [
           Expanded(
             child: FilledButton.icon(
-              style: FilledButton.styleFrom(backgroundColor: red, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(48)),
+              style: FilledButton.styleFrom(
+                backgroundColor: red,
+                foregroundColor: Colors.white,
+                minimumSize: const Size.fromHeight(48),
+              ),
               onPressed: () => pick(ImageSource.camera),
               icon: const Icon(Icons.photo_camera),
               label: const Text('Tirar foto'),
@@ -658,7 +798,10 @@ class _AddCarPageState extends State<AddCarPage> {
           ),
         ]),
         label('Coleção'),
-        Wrap(spacing: 8, children: [for (final b in brands) pill(b, brand == b, () => setState(() => brand = b))]),
+        Wrap(
+          spacing: 8,
+          children: [for (final b in brands) pill(b, brand == b, () => setState(() => brand = b))],
+        ),
         label('Código da embalagem'),
         TextField(
           controller: code,
@@ -676,12 +819,24 @@ class _AddCarPageState extends State<AddCarPage> {
         label('Nome do carrinho'),
         TextField(controller: name, decoration: field('Ex.: Cupê Turbo')),
         label('Cor'),
-        Wrap(spacing: 8, runSpacing: 8, children: [for (final k in carColors.keys) pill(k, color == k, () => setState(() => color = k))]),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [for (final k in carColors.keys) pill(k, color == k, () => setState(() => color = k))],
+        ),
         label('Marcador'),
-        Wrap(spacing: 8, runSpacing: 8, children: [for (final s in statuses) pill(s, status == s, () => setState(() => status = s))]),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [for (final s in statuses) pill(s, status == s, () => setState(() => status = s))],
+        ),
         const SizedBox(height: 28),
         FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: red, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(56)),
+          style: FilledButton.styleFrom(
+            backgroundColor: red,
+            foregroundColor: Colors.white,
+            minimumSize: const Size.fromHeight(56),
+          ),
           onPressed: save,
           child: const Text('Salvar na coleção', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
         ),
@@ -732,7 +887,10 @@ class _ScanPageState extends State<ScanPage> {
           child: Container(
             width: 260,
             height: 170,
-            decoration: BoxDecoration(border: Border.all(color: const Color(0xFF3F66C2), width: 4), borderRadius: BorderRadius.circular(20)),
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFF3F66C2), width: 4),
+              borderRadius: BorderRadius.circular(20),
+            ),
           ),
         ),
         SafeArea(
@@ -751,8 +909,14 @@ class _ScanPageState extends State<ScanPage> {
               const SizedBox(width: 12),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(color: surface, borderRadius: BorderRadius.circular(16)),
-                child: const Text('Aponte para o código de barras', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                decoration: BoxDecoration(
+                  color: surface,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Text(
+                  'Aponte para o código de barras',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                ),
               ),
             ]),
           ),
@@ -800,11 +964,16 @@ class _CheckPageState extends State<CheckPage> {
   @override
   Widget build(BuildContext context) {
     final found = checked ? garage.byCode(code.text) : null;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Já tenho esse?')),
       body: ListView(padding: const EdgeInsets.all(20), children: [
         FilledButton.icon(
-          style: FilledButton.styleFrom(backgroundColor: red, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(56)),
+          style: FilledButton.styleFrom(
+            backgroundColor: red,
+            foregroundColor: Colors.white,
+            minimumSize: const Size.fromHeight(56),
+          ),
           onPressed: scan,
           icon: const Icon(Icons.qr_code_scanner),
           label: const Text('Escanear com a câmera', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
@@ -812,10 +981,18 @@ class _CheckPageState extends State<CheckPage> {
         const SizedBox(height: 18),
         const Text('Ou digite o código da embalagem:', style: TextStyle(color: muted)),
         const SizedBox(height: 14),
-        TextField(controller: code, onChanged: (_) => setState(() => checked = false), decoration: field('Código da embalagem')),
+        TextField(
+          controller: code,
+          onChanged: (_) => setState(() => checked = false),
+          decoration: field('Código da embalagem'),
+        ),
         const SizedBox(height: 14),
         FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: blue, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(52)),
+          style: FilledButton.styleFrom(
+            backgroundColor: blue,
+            foregroundColor: Colors.white,
+            minimumSize: const Size.fromHeight(52),
+          ),
           onPressed: () => setState(() => checked = code.text.trim().isNotEmpty),
           child: const Text('Verificar'),
         ),
@@ -838,7 +1015,11 @@ class _CheckPageState extends State<CheckPage> {
           const Text('Ainda não tem este', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800)),
           const SizedBox(height: 16),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: red, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(52)),
+            style: FilledButton.styleFrom(
+              backgroundColor: red,
+              foregroundColor: Colors.white,
+              minimumSize: const Size.fromHeight(52),
+            ),
             onPressed: () => go(context, AddCarPage(brand: widget.brand, code: code.text.trim())),
             child: const Text('Cadastrar'),
           ),
