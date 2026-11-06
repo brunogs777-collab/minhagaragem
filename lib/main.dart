@@ -1,18 +1,15 @@
-// Minha Garagem – versão 1 (Flutter, iOS + Android)
-// Uso: flutter create minha_garagem && cd minha_garagem
-//      flutter pub add shared_preferences image_picker path_provider mobile_scanner google_mobile_ads url_launcher
-//      iOS: em ios/Runner/Info.plist adicione NSCameraUsageDescription e NSPhotoLibraryUsageDescription
-//      (texto explicando que o app usa a câmera para fotos e para ler códigos)
-// Android: minSdk 24 em android/app/build.gradle + App ID do AdMob (meta-data) no AndroidManifest.xml.
-// iOS: chave GADApplicationIdentifier (App ID do AdMob) no Info.plist.
-//      troque lib/main.dart por este arquivo e rode: flutter run
+// Minha Garagem – versão 2 (Flutter, Android + iOS)
+// Pacotes: flutter pub add shared_preferences image_picker path_provider mobile_scanner google_mobile_ads url_launcher share_plus
+// Os ajustes de Android (minSdk, AdMob, internet) são feitos pelo workflow build-apk.yml.
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -24,29 +21,126 @@ const red = Color(0xFFC1121F);
 const blue = Color(0xFF1F4AA8);
 
 const brands = ['Hot Wheels', 'Matchbox'];
-const statuses = ['Tenho', 'Quero', 'Repetido', 'Treasure Hunt'];
+const statuses = ['Tenho', 'Quero', 'Treasure Hunt'];
+const conditions = ['Lacrado', 'Aberto', 'Solto'];
 const carColors = <String, Color>{
   'Vermelho': Color(0xFFE5384A),
   'Azul': Color(0xFF3D7BEF),
   'Amarelo': Color(0xFFF5B91A),
   'Verde': Color(0xFF34B56A),
   'Prata': Color(0xFFC9CCD6),
+  'Preto': Color(0xFF4A4A55),
+  'Branco': Color(0xFFF2F2F2),
+  'Laranja': Color(0xFFF26B21),
+  'Roxo': Color(0xFF8B5CF6),
 };
 
-// ---------- Dados e armazenamento local ----------
+// ---------- Dados ----------
 class Car {
-  Car({required this.id, required this.name, required this.code, required this.color, required this.brand, required this.status, this.photo = ''});
-  final String id, name, code, color, brand;
-  String status;
-  String photo; // nome do arquivo da foto (vazio = sem foto)
+  Car({
+    required this.id,
+    required this.name,
+    this.code = '',
+    this.toy = '',
+    this.color = 'Vermelho',
+    this.brand = 'Hot Wheels',
+    this.status = 'Tenho',
+    this.photo = '',
+    this.series = '',
+    this.scale = '1:64',
+    this.qty = 1,
+    this.fav = false,
+    this.trade = false,
+    this.price = '',
+    this.store = '',
+    this.cond = '',
+    this.place = '',
+    this.notes = '',
+  });
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'code': code, 'color': color, 'brand': brand, 'status': status, 'photo': photo};
-  factory Car.fromJson(Map<String, dynamic> j) =>
-      Car(id: j['id'], name: j['name'], code: j['code'], color: j['color'], brand: j['brand'], status: j['status'], photo: j['photo'] ?? '');
+  String id, name, code, toy, color, brand, status, photo, series, scale, price, store, cond, place, notes;
+  int qty;
+  bool fav, trade;
+
+  Map<String, dynamic> toJson() => {
+        'id': id, 'name': name, 'code': code, 'toy': toy, 'color': color, 'brand': brand,
+        'status': status, 'photo': photo, 'series': series, 'scale': scale, 'qty': qty,
+        'fav': fav, 'trade': trade, 'price': price, 'store': store, 'cond': cond,
+        'place': place, 'notes': notes,
+      };
+
+  factory Car.fromJson(Map<String, dynamic> j) {
+    String s(String k, [String d = '']) => (j[k] ?? d).toString();
+    var status = s('status', 'Tenho');
+    var qty = int.tryParse(s('qty', '1')) ?? 1;
+    if (status == 'Repetido') {
+      status = 'Tenho';
+      if (qty < 2) qty = 2;
+    }
+    return Car(
+      id: s('id'), name: s('name'), code: s('code'), toy: s('toy'), color: s('color', 'Vermelho'),
+      brand: s('brand', 'Hot Wheels'), status: status, photo: s('photo'), series: s('series'),
+      scale: s('scale', '1:64'), qty: qty < 1 ? 1 : qty, fav: j['fav'] == true, trade: j['trade'] == true,
+      price: s('price'), store: s('store'), cond: s('cond'), place: s('place'), notes: s('notes'),
+    );
+  }
+}
+
+String csvCell(String v) => '"${v.replaceAll('"', '""')}"';
+
+// Lê CSV/planilha colada: detecta o separador (tab, ; ou ,) e aceita aspas.
+List<List<String>> parseCsv(String text) {
+  final t = text.replaceFirst('\uFEFF', '');
+  final first = t.split('\n').first;
+  var delim = ';';
+  var best = -1;
+  for (final d in ['\t', ';', ',']) {
+    final n = d.allMatches(first).length;
+    if (n > best) {
+      best = n;
+      delim = d;
+    }
+  }
+  final rows = <List<String>>[];
+  var row = <String>[];
+  final cell = StringBuffer();
+  var q = false;
+  for (var i = 0; i < t.length; i++) {
+    final ch = t[i];
+    if (q) {
+      if (ch == '"') {
+        if (i + 1 < t.length && t[i + 1] == '"') {
+          cell.write('"');
+          i++;
+        } else {
+          q = false;
+        }
+      } else {
+        cell.write(ch);
+      }
+    } else if (ch == '"') {
+      q = true;
+    } else if (ch == delim) {
+      row.add(cell.toString());
+      cell.clear();
+    } else if (ch == '\n' || ch == '\r') {
+      if (ch == '\r' && i + 1 < t.length && t[i + 1] == '\n') i++;
+      row.add(cell.toString());
+      cell.clear();
+      if (row.any((c) => c.trim().isNotEmpty)) rows.add(row);
+      row = <String>[];
+    } else {
+      cell.write(ch);
+    }
+  }
+  row.add(cell.toString());
+  if (row.any((c) => c.trim().isNotEmpty)) rows.add(row);
+  return rows;
 }
 
 class Garage extends ChangeNotifier {
   final List<Car> cars = [];
+  final Map<String, int> totals = {}; // total de carrinhos de cada série ("marca|série")
   SharedPreferences? _prefs;
   String docsPath = '';
 
@@ -57,28 +151,34 @@ class Garage extends ChangeNotifier {
     if (raw != null) {
       cars.addAll((jsonDecode(raw) as List).map((e) => Car.fromJson(e as Map<String, dynamic>)));
     }
+    final t = _prefs!.getString('totals');
+    if (t != null) {
+      (jsonDecode(t) as Map<String, dynamic>).forEach((k, v) => totals[k] = (v as num).toInt());
+    }
   }
 
-  void _save() {
+  // Chame depois de mudar qualquer campo de um carrinho.
+  void changed() {
     _prefs?.setString('cars', jsonEncode(cars.map((c) => c.toJson()).toList()));
+    _prefs?.setString('totals', jsonEncode(totals));
     notifyListeners();
   }
 
   void add(Car c) {
     cars.add(c);
-    _save();
-  }
-
-  void setStatus(Car c, String s) {
-    c.status = s;
-    _save();
+    changed();
   }
 
   void remove(Car c) {
     final f = photoOf(c);
     if (f != null && f.existsSync()) f.deleteSync();
     cars.remove(c);
-    _save();
+    changed();
+  }
+
+  void setTotal(String key, int n) {
+    totals[key] = n;
+    changed();
   }
 
   File? photoOf(Car c) => c.photo.isEmpty ? null : File('$docsPath/${c.photo}');
@@ -90,14 +190,110 @@ class Garage extends ChangeNotifier {
     return name;
   }
 
-  // Usado pelo "Já tenho esse?": só considera carrinhos que a pessoa já possui.
-  Car? byCode(String code) {
-    final k = code.trim().toLowerCase();
+  // "Já tenho esse?": procura pelo código de barras ou pelo número do toy.
+  Car? byCode(String v) {
+    final k = v.trim().toLowerCase();
     if (k.isEmpty) return null;
     for (final c in cars) {
-      if (c.code.trim().toLowerCase() == k && c.status != 'Quero') return c;
+      if (c.status != 'Quero' && (c.code.trim().toLowerCase() == k || c.toy.trim().toLowerCase() == k)) return c;
     }
     return null;
+  }
+
+  String exportCsv() {
+    const head = [
+      'marca', 'nome', 'cor', 'codigo_barras', 'numero_toy', 'serie', 'escala', 'marcador',
+      'quantidade', 'favorito', 'troca', 'preco', 'onde_comprou', 'estado', 'guardado_em', 'notas'
+    ];
+    final rows = <String>[head.join(';')];
+    for (final c in cars) {
+      rows.add([
+        c.brand, c.name, c.color, c.code, c.toy, c.series, c.scale, c.status, '${c.qty}',
+        c.fav ? 'sim' : '', c.trade ? 'sim' : '', c.price, c.store, c.cond, c.place, c.notes,
+      ].map(csvCell).join(';'));
+    }
+    return '\uFEFF${rows.join('\r\n')}';
+  }
+
+  // Devolve [importados, que já existiam] ou null se a planilha não foi entendida.
+  List<int>? importCsv(String text) {
+    final rows = parseCsv(text);
+    if (rows.length < 2) return null;
+    final head = rows.first.map((h) => h.trim().toLowerCase()).toList();
+    int ix(List<String> names) {
+      for (final n in names) {
+        final i = head.indexOf(n);
+        if (i >= 0) return i;
+      }
+      return -1;
+    }
+
+    final iName = ix(['nome', 'name']);
+    if (iName < 0) return null;
+    final iBrand = ix(['marca', 'brand']);
+    final iColor = ix(['cor', 'color']);
+    final iCode = ix(['codigo_barras', 'codigo', 'código', 'barcode']);
+    final iToy = ix(['numero_toy', 'toy']);
+    final iSeries = ix(['serie', 'série', 'series']);
+    final iScale = ix(['escala', 'scale']);
+    final iStatus = ix(['marcador', 'status']);
+    final iQty = ix(['quantidade', 'qtd', 'qty']);
+    final iFav = ix(['favorito', 'fav']);
+    final iTrade = ix(['troca']);
+    final iPrice = ix(['preco', 'preço', 'price']);
+    final iStore = ix(['onde_comprou', 'loja']);
+    final iCond = ix(['estado', 'condicao', 'condição']);
+    final iPlace = ix(['guardado_em', 'local']);
+    final iNotes = ix(['notas', 'obs']);
+
+    String g(List<String> r, int i) => i >= 0 && i < r.length ? r[i].trim() : '';
+    bool yes(String v) => ['sim', 's', '1', 'true', 'x', 'yes'].contains(v.toLowerCase());
+    String keyOf(String b, String n, String c, String col) => '$b|${n.toLowerCase()}|$c|${col.toLowerCase()}';
+
+    final seen = {for (final c in cars) keyOf(c.brand, c.name, c.code, c.color)};
+    var added = 0;
+    var skipped = 0;
+    for (final r in rows.skip(1)) {
+      final name = g(r, iName);
+      if (name.isEmpty) continue;
+      final b = g(r, iBrand).toLowerCase().contains('match') ? 'Matchbox' : 'Hot Wheels';
+      final color = g(r, iColor).isEmpty ? 'Vermelho' : g(r, iColor);
+      final code = g(r, iCode);
+      final key = keyOf(b, name, code, color);
+      if (seen.contains(key)) {
+        skipped++;
+        continue;
+      }
+      seen.add(key);
+      final st = g(r, iStatus).toLowerCase();
+      var status = 'Tenho';
+      if (st.contains('quero') || st.contains('desej')) status = 'Quero';
+      if (st.contains('treasure') || st == 'th') status = 'Treasure Hunt';
+      var qty = int.tryParse(g(r, iQty)) ?? 1;
+      if (st.contains('repet') && qty < 2) qty = 2;
+      cars.add(Car(
+        id: '${DateTime.now().microsecondsSinceEpoch}_$added',
+        name: name,
+        code: code,
+        toy: g(r, iToy),
+        color: color,
+        brand: b,
+        status: status,
+        series: g(r, iSeries),
+        scale: g(r, iScale).isEmpty ? '1:64' : g(r, iScale),
+        qty: qty < 1 ? 1 : qty,
+        fav: yes(g(r, iFav)),
+        trade: yes(g(r, iTrade)),
+        price: g(r, iPrice),
+        store: g(r, iStore),
+        cond: g(r, iCond),
+        place: g(r, iPlace),
+        notes: g(r, iNotes),
+      ));
+      added++;
+    }
+    if (added > 0) changed();
+    return [added, skipped];
   }
 }
 
@@ -135,6 +331,9 @@ class GarageApp extends StatelessWidget {
 void go(BuildContext context, Widget page) =>
     Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
 
+void snack(BuildContext context, String t) =>
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
+
 Widget pill(String label, bool selected, VoidCallback onTap) => ChoiceChip(
       label: Text(label),
       selected: selected,
@@ -154,12 +353,15 @@ InputDecoration field(String hint, [IconData? icon]) => InputDecoration(
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(26), borderSide: const BorderSide(color: border, width: 2)),
     );
 
+Widget input(TextEditingController c, String hint, {int lines = 1, TextInputType? type}) =>
+    TextField(controller: c, minLines: lines, maxLines: lines, keyboardType: type, decoration: field(hint));
+
 Widget label(String t) => Padding(
       padding: const EdgeInsets.only(top: 18, bottom: 8),
       child: Text(t, style: const TextStyle(color: muted, fontSize: 13, fontWeight: FontWeight.w700)),
     );
 
-// Silhueta do carrinho (a foto real entra na próxima etapa).
+// Silhueta do carrinho (usada quando não há foto).
 class CarPainter extends CustomPainter {
   CarPainter(this.color);
   final Color color;
@@ -284,6 +486,7 @@ class CarRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = carColors[car.color] ?? muted;
+    final sub = car.series.isEmpty ? car.color : '${car.color} · ${car.series}';
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(color: surface, border: Border.all(color: border, width: 2), borderRadius: BorderRadius.circular(22)),
@@ -300,13 +503,79 @@ class CarRow extends StatelessWidget {
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(car.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-            Text(car.color, style: const TextStyle(color: muted, fontSize: 13)),
+            Text(sub, style: const TextStyle(color: muted, fontSize: 13)),
           ]),
         ),
         if (trailing != null) trailing!,
       ]),
     );
   }
+}
+
+// ---------- Afiliados (botão Comprar) ----------
+// Troque SEU_CODIGO pelo seu código de afiliado ao entrar num programa (o formato abaixo é o da Amazon).
+// Sem código, o link funciona como uma busca comum, mas não gera comissão.
+const affiliateSearch = 'https://www.amazon.com.br/s?k={q}&tag=SEU_CODIGO';
+
+Future<void> openStore(BuildContext context, Car c) async {
+  final url = affiliateSearch.replaceAll('{q}', Uri.encodeQueryComponent('${c.brand} ${c.name}'));
+  var ok = false;
+  try {
+    ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  } catch (_) {}
+  if (!ok && context.mounted) snack(context, 'Não foi possível abrir a loja');
+}
+
+// ---------- Backup, planilha e compartilhamento ----------
+Future<void> exportBackup(BuildContext context) async {
+  if (garage.cars.isEmpty) {
+    snack(context, 'Ainda não há nada para exportar');
+    return;
+  }
+  final dir = await getTemporaryDirectory();
+  final f = File('${dir.path}/minha-garagem.csv');
+  await f.writeAsString(garage.exportCsv());
+  await SharePlus.instance.share(ShareParams(files: [XFile(f.path, mimeType: 'text/csv')]));
+}
+
+String tradeText(String brand) {
+  final trade = garage.cars.where((c) => c.brand == brand && c.status != 'Quero' && c.trade).toList();
+  final wants = garage.cars.where((c) => c.brand == brand && c.status == 'Quero').toList();
+  String line(Car c) {
+    final qty = c.qty > 1 ? ' x${c.qty}' : '';
+    final series = c.series.isEmpty ? '' : ' - ${c.series}';
+    return '- ${c.name} (${c.color})$qty$series';
+  }
+
+  final b = StringBuffer('Minha Garagem - $brand\n');
+  if (trade.isNotEmpty) {
+    b.writeln('\nPara troca ou venda:');
+    for (final c in trade) {
+      b.writeln(line(c));
+    }
+  }
+  if (wants.isNotEmpty) {
+    b.writeln('\nProcuro:');
+    for (final c in wants) {
+      b.writeln(line(c));
+    }
+  }
+  return b.toString();
+}
+
+Future<bool> confirmDelete(BuildContext context, Car car) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Remover ${car.name}?'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+        TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remover')),
+      ],
+    ),
+  );
+  if (ok == true) garage.remove(car);
+  return ok == true;
 }
 
 // ---------- Estrutura principal ----------
@@ -323,21 +592,33 @@ class _ShellState extends State<Shell> {
 
   @override
   Widget build(BuildContext context) {
+    const titles = ['Sua coleção', 'Lista de desejos', 'Trocas e vendas'];
+    final pages = <Widget>[CollectionView(brand: brand), WishlistView(brand: brand), TradeView(brand: brand)];
     return Scaffold(
       body: SafeArea(
         child: Column(children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+            padding: const EdgeInsets.fromLTRB(20, 16, 4, 8),
             child: Row(children: [
-              Expanded(
-                child: Text(tab == 0 ? 'Sua coleção' : 'Lista de desejos',
-                    style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800)),
-              ),
+              Expanded(child: Text(titles[tab], style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800))),
               IconButton.filled(
                 tooltip: 'Já tenho esse?',
                 style: IconButton.styleFrom(backgroundColor: blue),
                 onPressed: () => go(context, CheckPage(brand: brand, autoScan: true)),
                 icon: const Icon(Icons.qr_code_scanner),
+              ),
+              PopupMenuButton<String>(
+                tooltip: 'Mais',
+                onSelected: (v) {
+                  if (v == 'series') go(context, SeriesPage(brand: brand));
+                  if (v == 'export') exportBackup(context);
+                  if (v == 'import') go(context, const ImportPage());
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'series', child: Text('Séries e progresso')),
+                  PopupMenuItem(value: 'export', child: Text('Exportar planilha (backup)')),
+                  PopupMenuItem(value: 'import', child: Text('Importar planilha')),
+                ],
               ),
             ]),
           ),
@@ -351,16 +632,18 @@ class _ShellState extends State<Shell> {
               onSelectionChanged: (s) => setState(() => brand = s.first),
             ),
           ),
-          Expanded(child: tab == 0 ? CollectionView(brand: brand) : WishlistView(brand: brand)),
+          Expanded(child: pages[tab]),
         ]),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: red,
-        foregroundColor: Colors.white,
-        onPressed: () => go(context, AddCarPage(brand: brand)),
-        icon: const Icon(Icons.add),
-        label: const Text('Novo'),
-      ),
+      floatingActionButton: tab == 2
+          ? null
+          : FloatingActionButton.extended(
+              backgroundColor: red,
+              foregroundColor: Colors.white,
+              onPressed: () => go(context, CarFormPage(brand: brand, status: tab == 1 ? 'Quero' : 'Tenho')),
+              icon: const Icon(Icons.add),
+              label: const Text('Novo'),
+            ),
       bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
         const AdSlot(),
         NavigationBar(
@@ -369,480 +652,9 @@ class _ShellState extends State<Shell> {
           destinations: const [
             NavigationDestination(icon: Icon(Icons.grid_view_rounded), label: 'Coleção'),
             NavigationDestination(icon: Icon(Icons.favorite_border), selectedIcon: Icon(Icons.favorite), label: 'Desejos'),
+            NavigationDestination(icon: Icon(Icons.swap_horiz), label: 'Trocas'),
           ],
         ),
-      ]),
-    );
-  }
-}
-
-// ---------- Coleção ----------
-class CollectionView extends StatefulWidget {
-  const CollectionView({super.key, required this.brand});
-  final String brand;
-
-  @override
-  State<CollectionView> createState() => _CollectionViewState();
-}
-
-class _CollectionViewState extends State<CollectionView> {
-  String query = '';
-  String? filter; // null = Todos
-
-  @override
-  Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: garage,
-      builder: (context, _) {
-        final q = query.toLowerCase();
-        final list = garage.cars
-            .where((c) =>
-                c.brand == widget.brand &&
-                c.status != 'Quero' &&
-                (filter == null || c.status == filter) &&
-                (q.isEmpty || '${c.name} ${c.color} ${c.code}'.toLowerCase().contains(q)))
-            .toList();
-        return Column(children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-            child: TextField(
-              onChanged: (v) => setState(() => query = v),
-              decoration: field('Buscar nome, cor ou código', Icons.search),
-            ),
-          ),
-          SizedBox(
-            height: 44,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              children: [
-                for (final f in <String?>[null, 'Tenho', 'Repetido', 'Treasure Hunt'])
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: pill(f ?? 'Todos', filter == f, () => setState(() => filter = f)),
-                  ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: list.isEmpty
-                ? const Center(
-                    child: Text('Nenhum carrinho ainda.\nToque em Novo para cadastrar.',
-                        textAlign: TextAlign.center, style: TextStyle(color: muted)))
-                : GridView.builder(
-                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 90),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2, mainAxisSpacing: 14, crossAxisSpacing: 14, childAspectRatio: 0.9),
-                    itemCount: list.length,
-                    itemBuilder: (_, i) => CarCard(car: list[i]),
-                  ),
-          ),
-        ]);
-      },
-    );
-  }
-}
-
-class CarCard extends StatelessWidget {
-  const CarCard({super.key, required this.car});
-  final Car car;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = carColors[car.color] ?? muted;
-    return InkWell(
-      borderRadius: BorderRadius.circular(22),
-      onLongPress: () => confirmDelete(context, car),
-      child: Container(
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(color: surface, border: Border.all(color: border, width: 2), borderRadius: BorderRadius.circular(22)),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(
-            child: Container(
-              width: double.infinity,
-              color: Color.lerp(surface, c, .18),
-              child: Stack(children: [
-                Positioned.fill(child: CarImage(car: car, silhouette: const Size(124, 62))),
-                if (car.status != 'Tenho')
-                  Positioned(
-                    top: 10,
-                    left: 10,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                      decoration: BoxDecoration(color: car.status == 'Repetido' ? blue : red, borderRadius: BorderRadius.circular(12)),
-                      child: Text(car.status, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Colors.white)),
-                    ),
-                  ),
-              ]),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(car.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
-              Text(car.color, style: const TextStyle(color: muted, fontSize: 13)),
-            ]),
-          ),
-        ]),
-      ),
-    );
-  }
-}
-
-Future<void> confirmDelete(BuildContext context, Car car) async {
-  final ok = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text('Remover ${car.name}?'),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-        TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remover')),
-      ],
-    ),
-  );
-  if (ok == true) garage.remove(car);
-}
-
-// ---------- Afiliados (botão Comprar) ----------
-// Troque SEU_CODIGO pelo seu código de afiliado ao entrar num programa (o formato abaixo é o da Amazon).
-// Sem código, o link funciona como uma busca comum, mas não gera comissão.
-const affiliateSearch = 'https://www.amazon.com.br/s?k={q}&tag=SEU_CODIGO';
-
-Future<void> openStore(BuildContext context, Car c) async {
-  final url = affiliateSearch.replaceAll('{q}', Uri.encodeQueryComponent('${c.brand} ${c.name}'));
-  var ok = false;
-  try {
-    ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-  } catch (_) {}
-  if (!ok && context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Não foi possível abrir a loja')));
-  }
-}
-
-// ---------- Lista de desejos ----------
-class WishlistView extends StatelessWidget {
-  const WishlistView({super.key, required this.brand});
-  final String brand;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: garage,
-      builder: (context, _) {
-        final list = garage.cars.where((c) => c.brand == brand && c.status == 'Quero').toList();
-        if (list.isEmpty) {
-          return const Center(
-            child: Text('Sua lista está vazia.\nCadastre um carrinho com o marcador Quero.',
-                textAlign: TextAlign.center, style: TextStyle(color: muted)),
-          );
-        }
-        return Column(children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
-            child: Text('Links de lojas parceiras podem gerar comissão para o app.', style: TextStyle(color: muted, fontSize: 12)),
-          ),
-          Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 90),
-              itemCount: list.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
-              itemBuilder: (_, i) => CarRow(
-                car: list[i],
-                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                  IconButton(
-                    tooltip: 'Já tenho',
-                    icon: const Icon(Icons.check_circle_outline),
-                    onPressed: () => garage.setStatus(list[i], 'Tenho'),
-                  ),
-                  OutlinedButton(
-                    style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF3F66C2), width: 2), minimumSize: const Size(0, 44)),
-                    onPressed: () => openStore(context, list[i]),
-                    child: const Text('Comprar'),
-                  ),
-                ]),
-              ),
-            ),
-          ),
-        ]);
-      },
-    );
-  }
-}
-
-// ---------- Novo carrinho ----------
-class AddCarPage extends StatefulWidget {
-  const AddCarPage({super.key, required this.brand, this.code = ''});
-  final String brand, code;
-
-  @override
-  State<AddCarPage> createState() => _AddCarPageState();
-}
-
-class _AddCarPageState extends State<AddCarPage> {
-  late final code = TextEditingController(text: widget.code);
-  final name = TextEditingController();
-  late String brand = widget.brand;
-  XFile? picked;
-  String color = carColors.keys.first;
-  String status = statuses.first;
-
-  @override
-  void dispose() {
-    code.dispose();
-    name.dispose();
-    super.dispose();
-  }
-
-  Future<void> pick(ImageSource source) async {
-    try {
-      final f = await ImagePicker().pickImage(source: source, maxWidth: 1280, imageQuality: 85);
-      if (f != null && mounted) setState(() => picked = f);
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Não foi possível abrir a câmera ou a galeria')));
-      }
-    }
-  }
-
-  Future<void> save() async {
-    if (name.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Dê um nome ao carrinho')));
-      return;
-    }
-    final p = picked;
-    final photo = p == null ? '' : await garage.savePhoto(p);
-    garage.add(Car(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
-      name: name.text.trim(),
-      code: code.text.trim(),
-      color: color,
-      brand: brand,
-      status: status,
-      photo: photo,
-    ));
-    if (mounted) Navigator.pop(context);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Novo carrinho')),
-      body: ListView(padding: const EdgeInsets.fromLTRB(20, 0, 20, 24), children: [
-        const SizedBox(height: 8),
-        Container(
-          height: 200,
-          clipBehavior: Clip.antiAlias,
-          decoration: BoxDecoration(color: surface, border: Border.all(color: border, width: 2), borderRadius: BorderRadius.circular(24)),
-          child: picked == null
-              ? const Center(child: Icon(Icons.photo_camera_outlined, size: 48, color: muted))
-              : Image.file(File(picked!.path), fit: BoxFit.cover, width: double.infinity),
-        ),
-        const SizedBox(height: 12),
-        Row(children: [
-          Expanded(
-            child: FilledButton.icon(
-              style: FilledButton.styleFrom(backgroundColor: red, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(48)),
-              onPressed: () => pick(ImageSource.camera),
-              icon: const Icon(Icons.photo_camera),
-              label: const Text('Tirar foto'),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-              onPressed: () => pick(ImageSource.gallery),
-              icon: const Icon(Icons.photo_library_outlined),
-              label: const Text('Galeria'),
-            ),
-          ),
-        ]),
-        label('Coleção'),
-        Wrap(spacing: 8, children: [for (final b in brands) pill(b, brand == b, () => setState(() => brand = b))]),
-        label('Código da embalagem'),
-        TextField(
-          controller: code,
-          decoration: field('Digite ou escaneie o código').copyWith(
-            suffixIcon: IconButton(
-              tooltip: 'Escanear código',
-              icon: const Icon(Icons.qr_code_scanner),
-              onPressed: () async {
-                final v = await scanCode(context);
-                if (v != null && mounted) setState(() => code.text = v);
-              },
-            ),
-          ),
-        ),
-        label('Nome do carrinho'),
-        TextField(controller: name, decoration: field('Ex.: Cupê Turbo')),
-        label('Cor'),
-        Wrap(spacing: 8, runSpacing: 8, children: [for (final k in carColors.keys) pill(k, color == k, () => setState(() => color = k))]),
-        label('Marcador'),
-        Wrap(spacing: 8, runSpacing: 8, children: [for (final s in statuses) pill(s, status == s, () => setState(() => status = s))]),
-        const SizedBox(height: 28),
-        FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: red, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(56)),
-          onPressed: save,
-          child: const Text('Salvar na coleção', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-        ),
-      ]),
-    );
-  }
-}
-
-// ---------- Leitura de código pela câmera ----------
-Future<String?> scanCode(BuildContext context) =>
-    Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const ScanPage()));
-
-class ScanPage extends StatefulWidget {
-  const ScanPage({super.key});
-
-  @override
-  State<ScanPage> createState() => _ScanPageState();
-}
-
-class _ScanPageState extends State<ScanPage> {
-  final controller = MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
-  bool done = false;
-
-  @override
-  void dispose() {
-    controller.dispose();
-    super.dispose();
-  }
-
-  void onDetect(BarcodeCapture capture) {
-    if (done) return;
-    for (final b in capture.barcodes) {
-      final v = b.rawValue;
-      if (v != null && v.isNotEmpty) {
-        done = true;
-        Navigator.pop(context, v);
-        return;
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(children: [
-        MobileScanner(controller: controller, onDetect: onDetect),
-        Center(
-          child: Container(
-            width: 260,
-            height: 170,
-            decoration: BoxDecoration(border: Border.all(color: const Color(0xFF3F66C2), width: 4), borderRadius: BorderRadius.circular(20)),
-          ),
-        ),
-        SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(children: [
-              IconButton.filled(
-                tooltip: 'Fechar',
-                style: IconButton.styleFrom(backgroundColor: surface),
-                onPressed: () {
-                  done = true;
-                  Navigator.pop(context);
-                },
-                icon: const Icon(Icons.close),
-              ),
-              const SizedBox(width: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(color: surface, borderRadius: BorderRadius.circular(16)),
-                child: const Text('Aponte para o código de barras', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
-              ),
-            ]),
-          ),
-        ),
-      ]),
-    );
-  }
-}
-
-// ---------- Já tenho esse? ----------
-class CheckPage extends StatefulWidget {
-  const CheckPage({super.key, required this.brand, this.autoScan = false});
-  final bool autoScan;
-  final String brand;
-
-  @override
-  State<CheckPage> createState() => _CheckPageState();
-}
-
-class _CheckPageState extends State<CheckPage> {
-  final code = TextEditingController();
-  bool checked = false;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.autoScan) WidgetsBinding.instance.addPostFrameCallback((_) => scan());
-  }
-
-  Future<void> scan() async {
-    final v = await scanCode(context);
-    if (v == null || !mounted) return;
-    setState(() {
-      code.text = v;
-      checked = true;
-    });
-  }
-
-  @override
-  void dispose() {
-    code.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final found = checked ? garage.byCode(code.text) : null;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Já tenho esse?')),
-      body: ListView(padding: const EdgeInsets.all(20), children: [
-        FilledButton.icon(
-          style: FilledButton.styleFrom(backgroundColor: red, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(56)),
-          onPressed: scan,
-          icon: const Icon(Icons.qr_code_scanner),
-          label: const Text('Escanear com a câmera', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-        ),
-        const SizedBox(height: 18),
-        const Text('Ou digite o código da embalagem:', style: TextStyle(color: muted)),
-        const SizedBox(height: 14),
-        TextField(controller: code, onChanged: (_) => setState(() => checked = false), decoration: field('Código da embalagem')),
-        const SizedBox(height: 14),
-        FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: blue, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(52)),
-          onPressed: () => setState(() => checked = code.text.trim().isNotEmpty),
-          child: const Text('Verificar'),
-        ),
-        const SizedBox(height: 24),
-        if (checked && found != null) ...[
-          const Text('Você já tem este!', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 14),
-          CarRow(car: found),
-          const SizedBox(height: 16),
-          OutlinedButton(
-            style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-            onPressed: () {
-              garage.setStatus(found, 'Repetido');
-              Navigator.pop(context);
-            },
-            child: const Text('Marcar como repetido'),
-          ),
-        ],
-        if (checked && found == null) ...[
-          const Text('Ainda não tem este', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 16),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: red, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(52)),
-            onPressed: () => go(context, AddCarPage(brand: widget.brand, code: code.text.trim())),
-            child: const Text('Cadastrar'),
-          ),
-        ],
       ]),
     );
   }
