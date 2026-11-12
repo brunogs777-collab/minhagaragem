@@ -137,6 +137,119 @@ jobs:
           cat android/app/src/main/AndroidManifest.xml
           grep -n "minSdk\|isMinifyEnabled\|storeFile" android/app/build.gradle* || true
 
+      - name: Gerar e instalar o ícone do app (usa icone.png)
+        run: |
+          if [ ! -f icone.png ]; then
+            echo "Aviso: icone.png não encontrado. Mantendo o ícone padrão."
+            exit 0
+          fi
+          python3 -m venv /tmp/iconvenv
+          /tmp/iconvenv/bin/pip install --quiet pillow
+          /tmp/iconvenv/bin/python - icone.png build_app/android/app/src/main/res build_app/android/app/src/main/AndroidManifest.xml <<'PY'
+          import os, sys
+          from PIL import Image, ImageDraw
+
+          src_path, res = sys.argv[1], sys.argv[2]
+          src = Image.open(src_path).convert('RGB')
+          w, h = src.size
+          s = min(w, h)
+          src = src.crop(((w - s) // 2, (h - s) // 2, (w - s) // 2 + s, (h - s) // 2 + s))
+          m = int(s * 0.015)  # tira a moldura escura da borda do desenho
+          art = src.crop((m, m, s - m, s - m))
+
+
+          def out(folder, name, img):
+              d = os.path.join(res, folder)
+              os.makedirs(d, exist_ok=True)
+              img.save(os.path.join(d, name), optimize=True)
+
+
+          def write(folder, name, text):
+              d = os.path.join(res, folder)
+              os.makedirs(d, exist_ok=True)
+              with open(os.path.join(d, name), 'w', encoding='utf-8') as f:
+                  f.write(text)
+
+
+          def rounded(img, ratio):
+              mask = Image.new('L', img.size, 0)
+              ImageDraw.Draw(mask).rounded_rectangle((0, 0, img.size[0] - 1, img.size[1] - 1), radius=int(img.size[0] * ratio), fill=255)
+              r = img.convert('RGBA')
+              r.putalpha(mask)
+              return r
+
+
+          def circle(img):
+              mask = Image.new('L', img.size, 0)
+              ImageDraw.Draw(mask).ellipse((0, 0, img.size[0] - 1, img.size[1] - 1), fill=255)
+              r = img.convert('RGBA')
+              r.putalpha(mask)
+              return r
+
+
+          for d, f in {'mdpi': 1.0, 'hdpi': 1.5, 'xhdpi': 2.0, 'xxhdpi': 3.0, 'xxxhdpi': 4.0}.items():
+              px = int(48 * f)  # ícone antigo (Android 7 e anteriores)
+              out('mipmap-' + d, 'ic_launcher.png', rounded(art.resize((px, px), Image.LANCZOS), 0.22))
+              base = Image.new('RGB', (px, px), (0, 0, 0))
+              inner = art.resize((int(px * 0.9), int(px * 0.9)), Image.LANCZOS)
+              base.paste(inner, ((px - inner.width) // 2, (px - inner.height) // 2))
+              out('mipmap-' + d, 'ic_launcher_round.png', circle(base))
+              fpx = int(108 * f)  # camada de frente do ícone adaptativo (108 dp)
+              fg = Image.new('RGBA', (fpx, fpx), (0, 0, 0, 0))
+              a = art.resize((int(fpx * 74 / 108), int(fpx * 74 / 108)), Image.LANCZOS)
+              fg.paste(a, ((fpx - a.width) // 2, (fpx - a.height) // 2))
+              out('mipmap-' + d, 'ic_launcher_foreground.png', fg)
+
+          out('drawable-nodpi', 'launch_logo.png', rounded(art.resize((512, 512), Image.LANCZOS), 0.22))
+          out('.', 'ic_launcher-playstore.png', art.resize((512, 512), Image.LANCZOS))
+
+          adaptive = '''<?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background"/>
+              <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+          </adaptive-icon>
+          '''
+          write('mipmap-anydpi-v26', 'ic_launcher.xml', adaptive)
+          write('mipmap-anydpi-v26', 'ic_launcher_round.xml', adaptive)
+          write('values', 'ic_launcher_background.xml', '''<?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="ic_launcher_background">#000000</color>
+          </resources>
+          ''')
+          launch = '''<?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item android:drawable="@android:color/black" />
+              <item>
+                  <bitmap android:gravity="center" android:src="@drawable/launch_logo" />
+              </item>
+          </layer-list>
+          '''
+          write('drawable', 'launch_background.xml', launch)
+          write('drawable-v21', 'launch_background.xml', launch)
+          write('values-v31', 'styles.xml', '''<?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">@drawable/launch_background</item>
+                  <item name="android:windowSplashScreenBackground">#000000</item>
+                  <item name="android:windowSplashScreenIconBackgroundColor">#000000</item>
+              </style>
+          </resources>
+          ''')
+          print('icone gerado em', res)
+
+          # manifesto: ícone redondo (só mexe se o ícone foi gerado)
+          mf = sys.argv[3]
+          with open(mf, encoding='utf-8') as fh:
+              t = fh.read()
+          if 'android:roundIcon' not in t:
+              t = t.replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@mipmap/ic_launcher"\n        android:roundIcon="@mipmap/ic_launcher_round"', 1)
+              with open(mf, 'w', encoding='utf-8') as fh:
+                  fh.write(t)
+          print('manifesto atualizado')
+          PY
+          ls build_app/android/app/src/main/res/mipmap-xxxhdpi
+          grep -n "Icon" build_app/android/app/src/main/AndroidManifest.xml || true
+
       - name: Compilar o APK
         working-directory: build_app
         run: flutter build apk --release --no-shrink --build-name=2.0.0 --build-number=${{ github.run_number }}
