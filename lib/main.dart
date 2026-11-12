@@ -3,6 +3,8 @@
 // Ajustes de Android (minSdk, AdMob, internet, nome do app e assinatura fixa) são feitos pelo workflow build-apk.yml.
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
@@ -904,6 +906,110 @@ Future<bool> confirmDelete(BuildContext context, Car car) async {
   if (ok == true) garage.remove(car);
   return ok == true;
 }
+
+// ---------- Busca online por código de barras e ajuste de foto ----------
+class Found {
+  Found({required this.title, required this.name, this.brand, this.color, this.imageUrl});
+  final String title, name;
+  final String? brand, color, imageUrl;
+}
+
+Future<List<int>?> httpBytes(String url, {int max = 4000000}) async {
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+  try {
+    final req = await client.getUrl(Uri.parse(url)).timeout(const Duration(seconds: 8));
+    req.headers.set('User-Agent', 'ColecaoNaPista/2.0');
+    req.headers.set('Accept', '*/*');
+    final res = await req.close().timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) return null;
+    final out = <int>[];
+    await for (final chunk in res.timeout(const Duration(seconds: 15))) {
+      out.addAll(chunk);
+      if (out.length > max) return null;
+    }
+    return out;
+  } catch (_) {
+    return null;
+  } finally {
+    client.close(force: true);
+  }
+}
+
+String cleanTitle(String t) {
+  var s = t.replaceAll(RegExp(r'hot\s*wheels|matchbox|mattel', caseSensitive: false), ' ');
+  s = s.replaceAll(RegExp(r'\b1[:/]64\b|die[- ]?cast', caseSensitive: false), ' ');
+  s = s.replaceAll(RegExp(r'[\-–|,]+'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+  return s.isEmpty ? t : s;
+}
+
+String? guessBrand(String t) {
+  final s = t.toLowerCase();
+  if (s.contains('matchbox')) return 'Matchbox';
+  if (s.contains('hot wheels') || s.contains('hotwheels')) return 'Hot Wheels';
+  return null;
+}
+
+String? guessColor(String t) {
+  final s = t.toLowerCase();
+  const names = {
+    'red': 'Vermelho', 'vermelho': 'Vermelho', 'blue': 'Azul', 'azul': 'Azul', 'yellow': 'Amarelo', 'amarelo': 'Amarelo',
+    'green': 'Verde', 'verde': 'Verde', 'silver': 'Prata', 'prata': 'Prata', 'black': 'Preto', 'preto': 'Preto',
+    'white': 'Branco', 'branco': 'Branco', 'orange': 'Laranja', 'laranja': 'Laranja', 'purple': 'Roxo', 'roxo': 'Roxo',
+  };
+  for (final e in names.entries) {
+    if (RegExp('\\b${e.key}\\b').hasMatch(s)) return e.value;
+  }
+  return null;
+}
+
+// Consulta um banco público de produtos pelo código de barras (nem todo carrinho está nele).
+Future<Found?> lookupBarcode(String code) async {
+  final digits = code.replaceAll(RegExp(r'\D'), '');
+  if (digits.length < 8) return null;
+  final raw = await httpBytes('https://api.upcitemdb.com/prod/trial/lookup?upc=$digits', max: 800000);
+  if (raw == null) return null;
+  try {
+    final j = jsonDecode(utf8.decode(raw));
+    final items = j is Map ? j['items'] : null;
+    if (items is! List || items.isEmpty) return null;
+    final it = items.first;
+    if (it is! Map) return null;
+    final title = (it['title'] ?? '').toString().trim();
+    if (title.isEmpty) return null;
+    final imgs = it['images'];
+    final img = imgs is List && imgs.isNotEmpty ? imgs.first.toString() : null;
+    return Found(
+      title: title,
+      name: cleanTitle(title),
+      brand: guessBrand('$title ${it['brand'] ?? ''}'),
+      color: guessColor(title),
+      imageUrl: img,
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+// Gira a foto em passos de 90° e salva na pasta do app (formato PNG).
+Future<String> savePhotoRotated(String path, int turns) async {
+  var data = Uint8List.fromList(await File(path).readAsBytes());
+  for (var i = 0; i < turns % 4; i++) {
+    final codec = await ui.instantiateImageCodec(data);
+    final img = (await codec.getNextFrame()).image;
+    final rec = ui.PictureRecorder();
+    final canvas = Canvas(rec);
+    canvas.translate(img.height.toDouble(), 0);
+    canvas.rotate(1.5707963267948966);
+    canvas.drawImage(img, Offset.zero, Paint());
+    final rotated = await rec.endRecording().toImage(img.height, img.width);
+    final bd = await rotated.toByteData(format: ui.ImageByteFormat.png);
+    if (bd == null) break;
+    data = bd.buffer.asUint8List();
+  }
+  final name = 'car_${DateTime.now().microsecondsSinceEpoch}.png';
+  await File('${garage.docsPath}/$name').writeAsBytes(data);
+  return name;
+}
 // ---------- Estrutura principal ----------
 class Shell extends StatefulWidget {
   const Shell({super.key});
@@ -1280,7 +1386,7 @@ class _CollectionViewState extends State<CollectionView> {
                 : GridView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
                     gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 0.70),
+                        crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 0.58),
                     itemCount: list.length,
                     itemBuilder: (_, i) => CarCard(car: list[i]),
                   ),
@@ -1372,7 +1478,7 @@ class WishCard extends StatelessWidget {
         Row(children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(14),
-            child: SizedBox(width: 76, height: 76, child: CarImage(car: car, silhouette: const Size(56, 28))),
+            child: SizedBox(width: 72, height: 96, child: CarImage(car: car, silhouette: const Size(56, 28))),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -1446,7 +1552,7 @@ class CarTile extends StatelessWidget {
       child: Row(children: [
         ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: SizedBox(width: 64, height: 64, child: CarImage(car: car, silhouette: const Size(48, 24))),
+          child: SizedBox(width: 60, height: 76, child: CarImage(car: car, silhouette: const Size(48, 24))),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -1600,9 +1706,10 @@ class SeriesPage extends StatelessWidget {
 
 // ---------- Cadastro e edição ----------
 class CarFormPage extends StatefulWidget {
-  const CarFormPage({super.key, this.car, this.brand = 'Hot Wheels', this.status = 'Tenho', this.code = '', this.toy = ''});
+  const CarFormPage({super.key, this.car, this.brand = 'Hot Wheels', this.status = 'Tenho', this.code = '', this.toy = '', this.autoLookup = false});
   final Car? car; // null = novo carrinho
   final String brand, status, code, toy;
+  final bool autoLookup; // busca nome e foto online ao abrir (usado depois de escanear)
 
   @override
   State<CarFormPage> createState() => _CarFormPageState();
@@ -1627,6 +1734,8 @@ class _CarFormPageState extends State<CarFormPage> {
   late bool fav = car?.fav ?? false;
   late bool trade = car?.trade ?? false;
   XFile? picked;
+  int turns = 0; // giros de 90° aplicados à foto
+  bool searching = false;
 
   @override
   void dispose() {
@@ -1634,6 +1743,50 @@ class _CarFormPageState extends State<CarFormPage> {
       c.dispose();
     }
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autoLookup && widget.code.isNotEmpty && car == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => lookup(quiet: true));
+    }
+  }
+
+  // Busca nome, marca, cor e foto do carrinho online pelo código de barras.
+  Future<void> lookup({bool quiet = false}) async {
+    final v = code.text.trim();
+    if (!RegExp(r'^\d{8,}$').hasMatch(v)) {
+      if (!quiet) snack(context, 'Digite ou escaneie um código de barras (só números) primeiro');
+      return;
+    }
+    setState(() => searching = true);
+    final r = await lookupBarcode(v);
+    String? tmp;
+    if (r != null && r.imageUrl != null && picked == null && (car?.photo ?? '').isEmpty) {
+      final bytes = await httpBytes(r.imageUrl!);
+      if (bytes != null) {
+        final dir = await getTemporaryDirectory();
+        final f = File('${dir.path}/busca_${DateTime.now().microsecondsSinceEpoch}.jpg');
+        await f.writeAsBytes(bytes);
+        tmp = f.path;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      searching = false;
+      if (r != null) {
+        if (name.text.trim().isEmpty) name.text = r.name;
+        if (car == null && r.brand != null) brand = r.brand!;
+        if (car == null && r.color != null) color = r.color!;
+        if (notes.text.trim().isEmpty) notes.text = 'Encontrado online: ${r.title}';
+        if (tmp != null) {
+          picked = XFile(tmp);
+          turns = 0;
+        }
+      }
+    });
+    snack(context, r == null ? 'Não achei esse código na busca online. Preencha à mão.' : 'Dados preenchidos automaticamente. Confira antes de salvar.');
   }
 
   Future<void> pick(ImageSource source) async {
@@ -1647,7 +1800,9 @@ class _CarFormPageState extends State<CarFormPage> {
 
   Future<void> scan() async {
     final v = await scanCode(context);
-    if (v != null && mounted) setState(() => code.text = v);
+    if (v == null || !mounted) return;
+    setState(() => code.text = v);
+    if (car == null) lookup(quiet: true);
   }
 
   Future<void> save() async {
@@ -1656,7 +1811,13 @@ class _CarFormPageState extends State<CarFormPage> {
       return;
     }
     final pk = picked;
-    final photo = pk == null ? null : await garage.savePhoto(pk);
+    final cur = car == null ? null : garage.photoOf(car!);
+    String? photo;
+    if (pk != null) {
+      photo = turns % 4 == 0 ? await garage.savePhoto(pk) : await savePhotoRotated(pk.path, turns);
+    } else if (turns % 4 != 0 && cur != null) {
+      photo = await savePhotoRotated(cur.path, turns);
+    }
     final c = car ?? Car(id: DateTime.now().microsecondsSinceEpoch.toString(), name: '');
     if (photo != null) {
       final old = garage.photoOf(c);
@@ -1775,13 +1936,28 @@ class _CarFormPageState extends State<CarFormPage> {
         AppCard(
           padding: EdgeInsets.zero,
           child: Column(children: [
-            Container(height: 220, width: double.infinity, color: p.card2, child: preview),
+            Container(
+              color: p.card2,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              alignment: Alignment.center,
+              child: FractionallySizedBox(
+                widthFactor: .66,
+                child: AspectRatio(
+                  aspectRatio: 3 / 4,
+                  child: ClipRRect(borderRadius: BorderRadius.circular(16), child: RotatedBox(quarterTurns: turns % 4, child: preview)),
+                ),
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.all(12),
               child: Row(children: [
                 Expanded(child: smallBtn(p, 'Tirar foto', () => pick(ImageSource.camera), icon: Icons.photo_camera, filled: true)),
                 const SizedBox(width: 10),
                 Expanded(child: smallBtn(p, 'Galeria', () => pick(ImageSource.gallery), icon: Icons.photo_library_outlined)),
+                if (picked != null || existing != null) ...[
+                  const SizedBox(width: 10),
+                  Expanded(child: smallBtn(p, 'Girar', () => setState(() => turns = (turns + 1) % 4), icon: Icons.rotate_right)),
+                ],
               ]),
             ),
           ]),
@@ -1804,6 +1980,8 @@ class _CarFormPageState extends State<CarFormPage> {
               suffixIcon: IconButton(tooltip: 'Escanear código', icon: Icon(Icons.qr_code_scanner, color: p.accent), onPressed: scan),
             ),
           ),
+          const SizedBox(height: 10),
+          ghost(p, searching ? 'Buscando dados online...' : 'Buscar dados e foto online', searching ? null : () => lookup(), icon: Icons.cloud_download_outlined),
           fieldLabel(p, 'Número do toy (impresso na base do carrinho)'),
           input(p, toy, 'Útil para carrinho solto, sem cartela'),
         ]),
@@ -2043,9 +2221,9 @@ class _CheckPageState extends State<CheckPage> {
                 Expanded(child: Text('Ainda não tem este', style: ts(p.text, 20, FontWeight.w900))),
               ]),
               const SizedBox(height: 6),
-              Text('Nenhum carrinho cadastrado com esse código.', style: ts(p.sub, 13)),
+              Text('Nenhum carrinho cadastrado com esse código. Ao cadastrar, o app tenta buscar nome e foto online.', style: ts(p.sub, 13)),
               const SizedBox(height: 14),
-              primary(p, 'Cadastrar', () => go(context, CarFormPage(brand: widget.brand, code: isBarcode ? typed : '', toy: isBarcode ? '' : typed)), icon: Icons.add),
+              primary(p, 'Cadastrar', () => go(context, CarFormPage(brand: widget.brand, code: isBarcode ? typed : '', toy: isBarcode ? '' : typed, autoLookup: isBarcode)), icon: Icons.add),
             ]),
           ),
       ]),
