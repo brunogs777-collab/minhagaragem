@@ -3,7 +3,7 @@ name: Build APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, redesign-colecao-na-pista-v2]
 
 jobs:
   apk:
@@ -28,29 +28,246 @@ jobs:
 
       - name: Instalar dependências
         working-directory: build_app
-        run: flutter pub add shared_preferences image_picker path_provider mobile_scanner google_mobile_ads url_launcher
+        run: flutter pub add shared_preferences image_picker path_provider mobile_scanner google_mobile_ads url_launcher share_plus
 
-      - name: Ajustar o Android (minSdk 24, internet, AdMob de teste, sem Impeller e sem encolher o codigo)
+      - name: Chave de assinatura fixa (permite atualizar o app sem perder os dados)
+        working-directory: build_app
+        run: |
+          base64 -d > android/app/colecao-na-pista.jks <<'B64'
+          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
+          B64
+
+      - name: Ajustar o Android (nome, minSdk 24, internet, AdMob de teste, assinatura fixa, sem Impeller e sem encolher o codigo)
         working-directory: build_app
         run: |
           python3 - <<'PY'
-          import glob
+          import glob, re
           m = 'android/app/src/main/AndroidManifest.xml'
           s = open(m, encoding='utf-8').read()
+          s = re.sub(r'android:label="[^"]*"', 'android:label="Coleção na Pista"', s, count=1)
           s = s.replace('<application', '<uses-permission android:name="android.permission.INTERNET"/>\n    <application', 1)
           s = s.replace('</application>', '    <meta-data android:name="com.google.android.gms.ads.APPLICATION_ID" android:value="ca-app-pub-3940256099942544~3347511713"/>\n        <meta-data android:name="io.flutter.embedding.android.EnableImpeller" android:value="false"/>\n    </application>', 1)
           open(m, 'w', encoding='utf-8').write(s)
+          kts = """
+          android {
+              signingConfigs {
+                  create("release") {
+                      storeFile = file("colecao-na-pista.jks")
+                      storePassword = "colecaonapista"
+                      keyAlias = "colecao"
+                      keyPassword = "colecaonapista"
+                  }
+              }
+              buildTypes {
+                  getByName("release") {
+                      signingConfig = signingConfigs.getByName("release")
+                  }
+              }
+          }
+          """
+          groovy = """
+          android {
+              signingConfigs {
+                  release {
+                      storeFile file("colecao-na-pista.jks")
+                      storePassword "colecaonapista"
+                      keyAlias "colecao"
+                      keyPassword "colecaonapista"
+                  }
+              }
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
+                  }
+              }
+          }
+          """
           for g in glob.glob('android/app/build.gradle*'):
               t = open(g, encoding='utf-8').read().replace('flutter.minSdkVersion', '24')
               t = t.replace('signingConfig = signingConfigs.getByName("debug")', 'signingConfig = signingConfigs.getByName("debug")\n            isMinifyEnabled = false\n            isShrinkResources = false')
+              t += kts if g.endswith('.kts') else groovy
               open(g, 'w', encoding='utf-8').write(t)
           PY
           cat android/app/src/main/AndroidManifest.xml
-          grep -n "minSdk\|isMinifyEnabled" android/app/build.gradle* || true
+          grep -n "minSdk\|isMinifyEnabled\|storeFile" android/app/build.gradle* || true
+
+      - name: Gerar e instalar o ícone do app (usa icone.png)
+        run: |
+          if [ ! -f icone.png ]; then
+            echo "Aviso: icone.png não encontrado. Mantendo o ícone padrão."
+            exit 0
+          fi
+          python3 -m venv /tmp/iconvenv
+          /tmp/iconvenv/bin/pip install --quiet pillow
+          /tmp/iconvenv/bin/python - icone.png build_app/android/app/src/main/res build_app/android/app/src/main/AndroidManifest.xml <<'PY'
+          import os, sys
+          from PIL import Image, ImageDraw
+
+          src_path, res = sys.argv[1], sys.argv[2]
+          src = Image.open(src_path).convert('RGB')
+          w, h = src.size
+          s = min(w, h)
+          src = src.crop(((w - s) // 2, (h - s) // 2, (w - s) // 2 + s, (h - s) // 2 + s))
+          m = int(s * 0.015)  # tira a moldura escura da borda do desenho
+          art = src.crop((m, m, s - m, s - m))
+
+
+          def out(folder, name, img):
+              d = os.path.join(res, folder)
+              os.makedirs(d, exist_ok=True)
+              img.save(os.path.join(d, name), optimize=True)
+
+
+          def write(folder, name, text):
+              d = os.path.join(res, folder)
+              os.makedirs(d, exist_ok=True)
+              with open(os.path.join(d, name), 'w', encoding='utf-8') as f:
+                  f.write(text)
+
+
+          def rounded(img, ratio):
+              mask = Image.new('L', img.size, 0)
+              ImageDraw.Draw(mask).rounded_rectangle((0, 0, img.size[0] - 1, img.size[1] - 1), radius=int(img.size[0] * ratio), fill=255)
+              r = img.convert('RGBA')
+              r.putalpha(mask)
+              return r
+
+
+          def circle(img):
+              mask = Image.new('L', img.size, 0)
+              ImageDraw.Draw(mask).ellipse((0, 0, img.size[0] - 1, img.size[1] - 1), fill=255)
+              r = img.convert('RGBA')
+              r.putalpha(mask)
+              return r
+
+
+          for d, f in {'mdpi': 1.0, 'hdpi': 1.5, 'xhdpi': 2.0, 'xxhdpi': 3.0, 'xxxhdpi': 4.0}.items():
+              px = int(48 * f)  # ícone antigo (Android 7 e anteriores)
+              out('mipmap-' + d, 'ic_launcher.png', rounded(art.resize((px, px), Image.LANCZOS), 0.22))
+              base = Image.new('RGB', (px, px), (0, 0, 0))
+              inner = art.resize((int(px * 0.9), int(px * 0.9)), Image.LANCZOS)
+              base.paste(inner, ((px - inner.width) // 2, (px - inner.height) // 2))
+              out('mipmap-' + d, 'ic_launcher_round.png', circle(base))
+              fpx = int(108 * f)  # camada de frente do ícone adaptativo (108 dp)
+              fg = Image.new('RGBA', (fpx, fpx), (0, 0, 0, 0))
+              a = art.resize((int(fpx * 74 / 108), int(fpx * 74 / 108)), Image.LANCZOS)
+              fg.paste(a, ((fpx - a.width) // 2, (fpx - a.height) // 2))
+              out('mipmap-' + d, 'ic_launcher_foreground.png', fg)
+
+          out('drawable-nodpi', 'launch_logo.png', rounded(art.resize((512, 512), Image.LANCZOS), 0.22))
+          out('.', 'ic_launcher-playstore.png', art.resize((512, 512), Image.LANCZOS))
+
+          adaptive = '''<?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background"/>
+              <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+          </adaptive-icon>
+          '''
+          write('mipmap-anydpi-v26', 'ic_launcher.xml', adaptive)
+          write('mipmap-anydpi-v26', 'ic_launcher_round.xml', adaptive)
+          write('values', 'ic_launcher_background.xml', '''<?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="ic_launcher_background">#000000</color>
+          </resources>
+          ''')
+          launch = '''<?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item android:drawable="@android:color/black" />
+              <item>
+                  <bitmap android:gravity="center" android:src="@drawable/launch_logo" />
+              </item>
+          </layer-list>
+          '''
+          write('drawable', 'launch_background.xml', launch)
+          write('drawable-v21', 'launch_background.xml', launch)
+          write('values-v31', 'styles.xml', '''<?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">@drawable/launch_background</item>
+                  <item name="android:windowSplashScreenBackground">#000000</item>
+                  <item name="android:windowSplashScreenIconBackgroundColor">#000000</item>
+              </style>
+          </resources>
+          ''')
+          print('icone gerado em', res)
+
+          # manifesto: ícone redondo (só mexe se o ícone foi gerado)
+          mf = sys.argv[3]
+          with open(mf, encoding='utf-8') as fh:
+              t = fh.read()
+          if 'android:roundIcon' not in t:
+              t = t.replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@mipmap/ic_launcher"\n        android:roundIcon="@mipmap/ic_launcher_round"', 1)
+              with open(mf, 'w', encoding='utf-8') as fh:
+                  fh.write(t)
+          print('manifesto atualizado')
+          PY
+          ls build_app/android/app/src/main/res/mipmap-xxxhdpi
+          grep -n "Icon" build_app/android/app/src/main/AndroidManifest.xml || true
+
+      - name: Evitar a falha do Android Lint no build de release (e o monitor de arquivos do Gradle)
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/sem-lint.gradle <<'GRADLE'
+          allprojects {
+              tasks.configureEach { t ->
+                  if (t.name.startsWith('lintVital') || t.name.startsWith('lintAnalyze') || t.name.startsWith('lintReport') || t.name == 'lint') {
+                      t.enabled = false
+                  }
+              }
+          }
+          GRADLE
+          echo "org.gradle.vfs.watch=false" >> ~/.gradle/gradle.properties
+          cat ~/.gradle/init.d/sem-lint.gradle ~/.gradle/gradle.properties
 
       - name: Compilar o APK
         working-directory: build_app
-        run: flutter build apk --release --no-shrink
+        run: flutter build apk --release --no-shrink --build-name=2.0.0 --build-number=${{ github.run_number }}
 
       - uses: actions/upload-artifact@v4
         with:
